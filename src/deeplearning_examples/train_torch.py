@@ -1,4 +1,4 @@
-"""Reusable functional training utilities for PyTorch examples."""
+"""Functional PyTorch training utilities for the example notebooks."""
 
 from copy import deepcopy
 from dataclasses import dataclass

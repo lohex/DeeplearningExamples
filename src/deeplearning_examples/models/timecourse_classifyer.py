@@ -1,4 +1,4 @@
-"""PyTorch model for classifying single-cell signaling time courses."""
+"""Model for classifying single-cell signaling time courses with PyTorch."""
 
 import torch
 from torch import Tensor, nn

@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "deeplearning-examples"
+version = "0.1.0"
+description = "Deep-learning examples for biological time-course data"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "matplotlib>=3.7",
+    "numpy>=1.24",
+    "pandas>=2.0",
+    "scikit-learn>=1.2",
+    "scipy>=1.10",
+]
+
+[project.optional-dependencies]
+torch = [
+    "torch>=2.0",
+]
+tensorflow = [
+    "seaborn>=0.12",
+    "tensorflow>=2.12",
+]
+all = [
+    "seaborn>=0.12",
+    "tensorflow>=2.12",
+    "torch>=2.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]

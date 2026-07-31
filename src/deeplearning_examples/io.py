@@ -10,7 +10,7 @@ from scipy.io import loadmat
 
 
 FloatArray = NDArray[np.floating]
-DEFAULT_DATA_DIR = Path(__file__).resolve().parents[1] / "Data"
+DEFAULT_DATA_DIR = Path(__file__).resolve().parents[2] / "Data"
 
 
 class DataImportError(RuntimeError):

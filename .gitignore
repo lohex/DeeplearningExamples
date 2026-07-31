@@ -1,0 +1,8 @@
+*.egg-info/
+*.pth
+.ipynb_checkpoints/
+.pytest_cache/
+.venv/
+__pycache__/
+build/
+dist/
