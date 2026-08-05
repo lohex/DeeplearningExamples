@@ -38,13 +38,22 @@ all = [
     "tqdm>=4.64",
 ]
 
-[tool.setuptools.packages.find]
-where = [
-    "src",
-    "projects/pytorch_cdgan/src",
-    "projects/pytorch_timecourse_classification/src",
-    "projects/tensorflow_attention/src",
-    "projects/tensorflow_gradcam/src",
-    "projects/dataset_visualization/src",
-    "projects/bbbc021_morphology_classification/src",
+[tool.setuptools]
+packages = [
+    "deeplearning_examples",
+    "pytorch_cdgan",
+    "pytorch_timecourse_classification",
+    "tensorflow_attention",
+    "tensorflow_gradcam",
+    "dataset_visualization",
+    "bbbc021_morphology_classification",
 ]
+
+[tool.setuptools.package-dir]
+deeplearning_examples = "src/deeplearning_examples"
+pytorch_cdgan = "projects/pytorch_cdgan/src/pytorch_cdgan"
+pytorch_timecourse_classification = "projects/pytorch_timecourse_classification/src/pytorch_timecourse_classification"
+tensorflow_attention = "projects/tensorflow_attention/src/tensorflow_attention"
+tensorflow_gradcam = "projects/tensorflow_gradcam/src/tensorflow_gradcam"
+dataset_visualization = "projects/dataset_visualization/src/dataset_visualization"
+bbbc021_morphology_classification = "projects/bbbc021_morphology_classification/src/bbbc021_morphology_classification"
