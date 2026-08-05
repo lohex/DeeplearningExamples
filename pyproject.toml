@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "deeplearning-examples"
 version = "0.1.0"
-description = "Deep-learning examples for biological time-course data"
+description = "Deep-learning examples for biological time-course and image data"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -46,5 +46,5 @@ where = [
     "projects/tensorflow_attention/src",
     "projects/tensorflow_gradcam/src",
     "projects/dataset_visualization/src",
-    "projects/bbbc021_patch_extraction/src",
+    "projects/bbbc021_morphology_classification/src",
 ]
