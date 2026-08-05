@@ -23,7 +23,7 @@ projects/
 | [TensorFlow attention](projects/tensorflow_attention/) | Does cross-attention between levels and changes improve classification? | TensorFlow |
 | [TensorFlow Grad-CAM](projects/tensorflow_gradcam/) | Which temporal intervals support a classifier prediction? | TensorFlow |
 | [Dataset visualization](projects/dataset_visualization/) | What are the dimensions, ranges and dynamics of the supplied data? | NumPy, pandas |
-| [BBBC021 patch extraction](projects/bbbc021_patch_extraction/) | How can a balanced, group-safe morphology dataset be built? | Pillow, pandas |
+| [BBBC021 morphology classification](projects/bbbc021_morphology_classification/) | Can treatment-specific cell morphology be classified and interpreted with Grad-CAM? | Pillow, pandas |
 
 ## Installation
 
