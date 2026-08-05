@@ -1,1 +1,1 @@
-"""Reusable models and utilities for the deep-learning examples."""
+"""Data loading and representations shared by the example projects."""

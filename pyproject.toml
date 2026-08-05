@@ -24,11 +24,27 @@ tensorflow = [
     "seaborn>=0.12",
     "tensorflow>=2.12",
 ]
+bbbc021 = [
+    "pillow>=9.5",
+    "requests>=2.28",
+    "tqdm>=4.64",
+]
 all = [
+    "pillow>=9.5",
+    "requests>=2.28",
     "seaborn>=0.12",
     "tensorflow>=2.12",
     "torch>=2.0",
+    "tqdm>=4.64",
 ]
 
 [tool.setuptools.packages.find]
-where = ["src"]
+where = [
+    "src",
+    "projects/pytorch_cdgan/src",
+    "projects/pytorch_timecourse_classification/src",
+    "projects/tensorflow_attention/src",
+    "projects/tensorflow_gradcam/src",
+    "projects/dataset_visualization/src",
+    "projects/bbbc021_patch_extraction/src",
+]
