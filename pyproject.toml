@@ -9,6 +9,7 @@ description = "Deep-learning examples for biological time-course and image data"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    "ipykernel>=7.3.0",
     "matplotlib>=3.7",
     "numpy>=1.24",
     "pandas>=2.0",
@@ -43,9 +44,9 @@ packages = [
     "deeplearning_examples",
     "pytorch_cdgan",
     "pytorch_timecourse_classification",
+    "pytorch_timecourse_classification.models",
     "tensorflow_attention",
     "tensorflow_gradcam",
-    "dataset_visualization",
     "bbbc021_morphology_classification",
 ]
 
@@ -53,7 +54,7 @@ packages = [
 deeplearning_examples = "src/deeplearning_examples"
 pytorch_cdgan = "projects/pytorch_cdgan/src/pytorch_cdgan"
 pytorch_timecourse_classification = "projects/pytorch_timecourse_classification/src/pytorch_timecourse_classification"
+"pytorch_timecourse_classification.models" = "projects/pytorch_timecourse_classification/src/pytorch_timecourse_classification/models"
 tensorflow_attention = "projects/tensorflow_attention/src/tensorflow_attention"
 tensorflow_gradcam = "projects/tensorflow_gradcam/src/tensorflow_gradcam"
-dataset_visualization = "projects/dataset_visualization/src/dataset_visualization"
 bbbc021_morphology_classification = "projects/bbbc021_morphology_classification/src/bbbc021_morphology_classification"

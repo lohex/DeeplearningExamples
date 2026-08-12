@@ -17,4 +17,4 @@ python -m pip install -e ".[torch]"
 jupyter lab projects/pytorch_cdgan/notebooks/cdgan.ipynb
 ```
 
-The notebook uses the MATLAB trajectories in the repository's `Data/` directory. GAN scores near 0.5 are not sufficient evidence of quality; inspect diversity, nearest neighbors and biological trajectory features as well.
+The notebook loads only the fixed train fold from `Data/tgfb_stimulation_time_courses.npy` and `Data/tgfb_stimulation_labels.csv`. GAN scores near 0.5 are not sufficient evidence of quality; inspect diversity, nearest neighbors and biological trajectory features as well.
