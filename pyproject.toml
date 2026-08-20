@@ -9,6 +9,7 @@ description = "Deep-learning examples for biological time-course and image data"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    "aeon>=1.3,<1.4",
     "ipykernel>=7.3.0",
     "matplotlib>=3.7",
     "numpy>=1.24",
@@ -21,9 +22,8 @@ dependencies = [
 torch = [
     "torch>=2.0",
 ]
-tensorflow = [
-    "seaborn>=0.12",
-    "tensorflow>=2.12",
+tuning = [
+    "optuna>=4.0",
 ]
 bbbc021 = [
     "pillow>=9.5",
@@ -33,9 +33,8 @@ bbbc021 = [
 all = [
     "pillow>=9.5",
     "requests>=2.28",
-    "seaborn>=0.12",
-    "tensorflow>=2.12",
     "torch>=2.0",
+    "optuna>=4.0",
     "tqdm>=4.64",
 ]
 
@@ -45,8 +44,6 @@ packages = [
     "pytorch_cdgan",
     "pytorch_timecourse_classification",
     "pytorch_timecourse_classification.models",
-    "tensorflow_attention",
-    "tensorflow_gradcam",
     "bbbc021_morphology_classification",
 ]
 
@@ -55,6 +52,4 @@ deeplearning_examples = "src/deeplearning_examples"
 pytorch_cdgan = "projects/pytorch_cdgan/src/pytorch_cdgan"
 pytorch_timecourse_classification = "projects/pytorch_timecourse_classification/src/pytorch_timecourse_classification"
 "pytorch_timecourse_classification.models" = "projects/pytorch_timecourse_classification/src/pytorch_timecourse_classification/models"
-tensorflow_attention = "projects/tensorflow_attention/src/tensorflow_attention"
-tensorflow_gradcam = "projects/tensorflow_gradcam/src/tensorflow_gradcam"
 bbbc021_morphology_classification = "projects/bbbc021_morphology_classification/src/bbbc021_morphology_classification"

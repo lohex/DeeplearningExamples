@@ -72,7 +72,18 @@ def save_experiment_artifacts(
 
     strategy = {
         "optimizer": "AdamW",
-        "scheduler": "StepLR",
+        "scheduler": {
+            "strategy": resolved_training_config.scheduler_strategy,
+            "step_size": resolved_training_config.scheduler_step_size,
+            "decay": resolved_training_config.learning_rate_decay,
+            "warmup_epochs": resolved_training_config.warmup_epochs,
+            "warmup_start_factor": (
+                resolved_training_config.warmup_start_factor
+            ),
+            "minimum_learning_rate": (
+                resolved_training_config.minimum_learning_rate
+            ),
+        },
         "loss": "CrossEntropyLoss",
         "early_stopping": {
             "monitor": "tune_loss",
@@ -96,7 +107,7 @@ def save_experiment_artifacts(
         },
     }
     metadata = {
-        "artifact_format_version": 2,
+        "artifact_format_version": 3,
         "created_at_utc": datetime.now(UTC).isoformat(),
         "experiment_name": resolved_output_dir.name,
         "model": {
@@ -156,6 +167,9 @@ def save_experiment_artifacts(
         validation_loss=np.asarray(history.validation_loss),
         training_accuracy=np.asarray(history.training_accuracy),
         validation_accuracy=np.asarray(history.validation_accuracy),
+        training_macro_f1=np.asarray(history.training_macro_f1),
+        validation_macro_f1=np.asarray(history.validation_macro_f1),
+        learning_rate=np.asarray(history.learning_rate),
         best_epoch=np.asarray(history.best_epoch),
     )
     with metadata_path.open("w", encoding="utf-8") as metadata_file:

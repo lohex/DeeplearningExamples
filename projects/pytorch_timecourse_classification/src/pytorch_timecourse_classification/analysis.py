@@ -2,10 +2,13 @@
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 import torch
 from matplotlib.figure import Figure
-from torch import Tensor
+from sklearn.metrics import ConfusionMatrixDisplay, classification_report
+from torch import Tensor, nn
 
+from .data import FoldData
 from .training import TrainingHistory
 
 
@@ -19,10 +22,115 @@ def summarize_history(history: TrainingHistory) -> dict[str, int | float]:
         "tune_loss": history.validation_loss[best_index],
         "training_accuracy": history.training_accuracy[best_index],
         "tune_accuracy": history.validation_accuracy[best_index],
+        "training_macro_f1": history.training_macro_f1[best_index],
+        "tune_macro_f1": history.validation_macro_f1[best_index],
         "accuracy_gap": (
             history.training_accuracy[best_index]
             - history.validation_accuracy[best_index]
         ),
+        "macro_f1_gap": (
+            history.training_macro_f1[best_index]
+            - history.validation_macro_f1[best_index]
+        ),
+    }
+
+
+def analyze_training_history(
+    history: TrainingHistory,
+    *,
+    diagnose_fit: bool = False,
+) -> dict[str, int | float]:
+    """Print and plot the selected training state.
+
+    ``diagnose_fit`` keeps the deliberately simple heuristic used by the CNN
+    notebook. It is an orientation aid, not a statistical model comparison.
+    """
+    summary = summarize_history(history)
+    print(summary)
+    plot_training_history(history)
+    if diagnose_fit:
+        best_index = history.best_epoch - 1
+        degradation = history.validation_loss[-1] - history.validation_loss[best_index]
+        if summary["training_macro_f1"] < 0.50 and summary["tune_macro_f1"] < 0.50:
+            print("Both train and tune macro-F1 are low: inspect for underfitting.")
+        elif degradation > 0 and history.training_loss[-1] < history.training_loss[best_index]:
+            print("Train loss improves after tune loss is best: inspect for overfitting.")
+        else:
+            print("No single strong under/overfitting signal; inspect the full curves.")
+    return summary
+
+
+def evaluate_classifier(
+    model: nn.Module,
+    fold: FoldData,
+    *,
+    class_names: tuple[str, ...],
+    device: torch.device | str,
+) -> dict[str, float]:
+    """Evaluate one model on an explicitly supplied fold and show diagnostics."""
+    labels = np.arange(len(class_names))
+    predictions = predict_classes(model, fold, device=device)
+    targets = fold.targets.cpu().numpy()
+    report = classification_report(
+        targets,
+        predictions,
+        labels=labels,
+        target_names=class_names,
+        zero_division=0,
+        output_dict=True,
+    )
+    print(
+        classification_report(
+            targets,
+            predictions,
+            labels=labels,
+            target_names=class_names,
+            zero_division=0,
+        )
+    )
+    ConfusionMatrixDisplay.from_predictions(
+        targets,
+        predictions,
+        labels=labels,
+        display_labels=class_names,
+        xticks_rotation=35,
+        cmap="Blues",
+    )
+    plt.tight_layout()
+    return classification_metrics(targets, predictions, report=report)
+
+
+def predict_classes(
+    model: nn.Module,
+    fold: FoldData,
+    *,
+    device: torch.device | str,
+) -> np.ndarray:
+    """Return predicted class indices without producing notebook output."""
+    model.eval()
+    with torch.no_grad():
+        return model(fold.features.to(device)).argmax(dim=1).cpu().numpy()
+
+
+def classification_metrics(
+    targets: np.ndarray,
+    predictions: np.ndarray,
+    *,
+    report: dict[str, object] | None = None,
+) -> dict[str, float]:
+    """Return the scalar tune metrics shared by reports and parameter scans."""
+    resolved_report = report or classification_report(
+        targets,
+        predictions,
+        zero_division=0,
+        output_dict=True,
+    )
+    macro_average = resolved_report["macro avg"]
+    if not isinstance(macro_average, dict):
+        raise TypeError("classification report has no macro-average mapping.")
+    return {
+        "tune_accuracy": float(np.mean(predictions == targets)),
+        "tune_macro_f1": float(macro_average["f1-score"]),
     }
 
 
@@ -81,6 +189,61 @@ def plot_history_comparison(
         axis.grid(alpha=0.2)
         axis.legend(fontsize=8)
     figure.suptitle("Training-history comparison")
+    figure.tight_layout()
+    return figure
+
+
+def plot_ablation_diagnostics(
+    runs: pd.DataFrame,
+    summary: pd.DataFrame,
+    *,
+    title: str,
+) -> Figure:
+    """Plot performance, paired effects, convergence and generalization gaps."""
+    if runs.empty or summary.empty:
+        raise ValueError("runs and summary must not be empty.")
+    order = list(summary.index)
+    positions = np.arange(len(order))
+    figure, axes = plt.subplots(2, 2, figsize=(15, 10))
+
+    panels = (
+        ("tune_macro_f1_mean", "tune_macro_f1_std", "Tune macro-F1", 0.0),
+        ("macro_f1_delta_mean", "macro_f1_delta_std", "Paired Δ macro-F1", 0.0),
+        ("best_epoch_mean", "best_epoch_std", "Selected epoch", None),
+        ("macro_f1_gap_mean", None, "Train − tune macro-F1", 0.0),
+    )
+    for axis, (mean_column, std_column, panel_title, reference_line) in zip(
+        axes.flat, panels
+    ):
+        means = summary.loc[order, mean_column].to_numpy(dtype=float)
+        errors = (
+            summary.loc[order, std_column].fillna(0).to_numpy(dtype=float)
+            if std_column else None
+        )
+        axis.bar(positions, means, yerr=errors, capsize=3, color="tab:blue", alpha=0.75)
+        run_column = {
+            "tune_macro_f1_mean": "tune_macro_f1",
+            "macro_f1_delta_mean": "tune_macro_f1_delta",
+            "best_epoch_mean": "best_epoch",
+            "macro_f1_gap_mean": "macro_f1_gap",
+        }[mean_column]
+        for position, name in enumerate(order):
+            values = runs.loc[runs["name"] == name, run_column].dropna().to_numpy()
+            offsets = np.linspace(-0.12, 0.12, len(values)) if len(values) > 1 else [0.0]
+            axis.scatter(
+                position + np.asarray(offsets), values,
+                color="black", s=20, zorder=3,
+            )
+        if reference_line is not None:
+            axis.axhline(reference_line, color="0.25", linewidth=1, linestyle=":")
+        axis.set(
+            title=panel_title,
+            xticks=positions,
+            xticklabels=order,
+        )
+        axis.tick_params(axis="x", labelrotation=55)
+        axis.grid(axis="y", alpha=0.2)
+    figure.suptitle(title, fontsize=14)
     figure.tight_layout()
     return figure
 
