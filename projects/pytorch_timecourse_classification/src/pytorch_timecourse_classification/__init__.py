@@ -1,6 +1,15 @@
 """PyTorch classification of single-cell time courses."""
 
 from .experiments import create_model, fit_model, save_and_verify_experiment
+from .explainability import (
+    ExplainableLayer,
+    explainable_layers,
+    input_saliency,
+    integrated_gradients,
+    layer_gradcam,
+    normalize_attributions,
+    temporal_occlusion,
+)
 from .models import (
     AttentionClassifier,
     CNNClassifier,
@@ -9,8 +18,12 @@ from .models import (
     HierarchicalPatchTransformerClassifier,
 )
 from .training import EpochMetrics, TrainingConfig, TrainingHistory, train
+from .tracking import MLflowTrackingConfig
 from .tuning import (
     AblationSpec,
+    EXTENDED_CNN_ARCHITECTURE_SEARCH_SPACES,
+    EXTENDED_CNN_COMMON_MODEL_SEARCH_SPACE,
+    EXTENDED_CNN_TRAINING_SEARCH_SPACE,
     OptunaScanConfig,
     add_paired_reference_deltas,
     crossed_ablation_specs,
@@ -18,6 +31,10 @@ from .tuning import (
     run_ablations,
     run_optuna_scan,
     save_ablation_study,
+    best_trials_per_architecture,
+    extended_cnn_search_space_frame,
+    suggest_extended_cnn_model_config,
+    suggest_extended_cnn_training_config,
     summarize_ablations,
 )
 
@@ -34,13 +51,28 @@ __all__ = [
     "create_model",
     "fit_model",
     "save_and_verify_experiment",
+    "ExplainableLayer",
+    "explainable_layers",
+    "input_saliency",
+    "integrated_gradients",
+    "layer_gradcam",
+    "normalize_attributions",
+    "temporal_occlusion",
+    "MLflowTrackingConfig",
     "AblationSpec",
+    "EXTENDED_CNN_ARCHITECTURE_SEARCH_SPACES",
+    "EXTENDED_CNN_COMMON_MODEL_SEARCH_SPACE",
+    "EXTENDED_CNN_TRAINING_SEARCH_SPACE",
     "add_paired_reference_deltas",
     "OptunaScanConfig",
     "crossed_ablation_specs",
     "optuna_parameter_importances",
     "run_ablations",
     "run_optuna_scan",
+    "best_trials_per_architecture",
+    "extended_cnn_search_space_frame",
     "save_ablation_study",
+    "suggest_extended_cnn_model_config",
+    "suggest_extended_cnn_training_config",
     "summarize_ablations",
 ]

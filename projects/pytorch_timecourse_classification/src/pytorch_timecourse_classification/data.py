@@ -47,6 +47,31 @@ class Preprocessor:
         return torch.tensor(encoded, dtype=torch.long)
 
 
+def preprocessors_compatible(
+    reference: Preprocessor,
+    candidate: Preprocessor,
+    *,
+    relative_tolerance: float = 1e-9,
+    absolute_tolerance: float = 1e-12,
+) -> bool:
+    """Check semantic compatibility without requiring bit-identical floats."""
+    return (
+        reference.class_names == candidate.class_names
+        and bool(np.isclose(
+            reference.signal_mean,
+            candidate.signal_mean,
+            rtol=relative_tolerance,
+            atol=absolute_tolerance,
+        ))
+        and bool(np.isclose(
+            reference.signal_std,
+            candidate.signal_std,
+            rtol=relative_tolerance,
+            atol=absolute_tolerance,
+        ))
+    )
+
+
 def load_training_folds() -> tuple[FoldData, FoldData, Preprocessor]:
     """Load train and validate folds and fit preprocessing on train only."""
     train_trajectories, train_doses, train_years = load_data("train")

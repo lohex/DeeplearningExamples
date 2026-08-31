@@ -5,6 +5,7 @@ import platform
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import torch
@@ -39,6 +40,51 @@ def artifact_dir_for(experiment_name: str) -> Path:
     ):
         raise ValueError("experiment_name must be one non-empty path component.")
     return artifact_root() / experiment_name
+
+
+def save_selection_manifest(
+    filename: str,
+    *,
+    candidates: list[dict[str, Any]],
+    selection_fold: str,
+    selection_metric: str,
+    source_notebook: str,
+) -> Path:
+    """Persist an ordered, tune-only candidate selection for later notebooks."""
+    if Path(filename).name != filename or not filename.endswith(".json"):
+        raise ValueError("filename must be one JSON filename.")
+    if not candidates:
+        raise ValueError("candidates must not be empty.")
+    destination = artifact_root() / "selections"
+    destination.mkdir(parents=True, exist_ok=True)
+    path = destination / filename
+    payload = _json_safe({
+        "selection_format_version": 1,
+        "created_at_utc": datetime.now(UTC).isoformat(),
+        "selection_fold": selection_fold,
+        "selection_metric": selection_metric,
+        "source_notebook": source_notebook,
+        "candidates": candidates,
+    })
+    with path.open("w", encoding="utf-8") as manifest_file:
+        json.dump(payload, manifest_file, indent=2)
+        manifest_file.write("\n")
+    return path
+
+
+def load_selection_manifest(filename: str) -> dict[str, Any]:
+    """Load and minimally validate a saved candidate-selection manifest."""
+    if Path(filename).name != filename or not filename.endswith(".json"):
+        raise ValueError("filename must be one JSON filename.")
+    path = artifact_root() / "selections" / filename
+    with path.open(encoding="utf-8") as manifest_file:
+        payload = json.load(manifest_file)
+    required = {"selection_fold", "selection_metric", "candidates"}
+    if not isinstance(payload, dict) or not required.issubset(payload):
+        raise ValueError(f"Invalid selection manifest: {path}")
+    if not isinstance(payload["candidates"], list) or not payload["candidates"]:
+        raise ValueError(f"Selection manifest contains no candidates: {path}")
+    return payload
 
 
 def save_experiment_artifacts(
@@ -197,3 +243,13 @@ def _class_counts(targets: torch.Tensor | None) -> list[int] | None:
     if targets is None:
         return None
     return torch.bincount(targets.detach().cpu().long()).tolist()
+
+
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (tuple, list)):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, np.generic):
+        return value.item()
+    return value

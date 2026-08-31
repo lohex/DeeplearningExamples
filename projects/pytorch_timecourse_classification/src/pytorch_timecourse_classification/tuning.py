@@ -1,6 +1,7 @@
 """Controlled ablations and optional Optuna scans for CNN experiments."""
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from contextlib import nullcontext
 from dataclasses import asdict, dataclass, replace
 import json
 from pathlib import Path
@@ -20,6 +21,77 @@ from .training import EpochMetrics, TrainingConfig, TrainingHistory
 
 
 ScanScope = Literal["joint", "training", "model"]
+TrialBudgetMode = Literal["additional", "total"]
+ModelConfigSuggester = Callable[[Any, Mapping[str, object]], dict[str, object]]
+TrainingConfigSuggester = Callable[[Any, TrainingConfig], TrainingConfig]
+
+
+EXTENDED_CNN_TRAINING_SEARCH_SPACE: dict[str, object] = {
+    "learning_rate": (5e-5, 1e-3),
+    "use_weight_decay": (False, True),
+    "weight_decay": (1e-6, 1e-3),
+    "scheduler": ("none", "step", "cosine", "warmup_cosine"),
+    "scheduler_step_size": (8, 12, 16, 20, 24),
+    "learning_rate_decay": (0.5, 0.9),
+    "warmup_epochs": (3, 5, 10, 15),
+    "batch_size": (32, 64, 128, 256),
+    "class_balance_strategy": ("none", "weighted_loss", "balanced_sampler"),
+    "gradient_clip_norm": (None, 1.0, 5.0),
+}
+
+EXTENDED_CNN_COMMON_MODEL_SEARCH_SPACE: dict[str, object] = {
+    "head_depth": (1, 2),
+    "head_width.branch_models": (64, 128, 256, 512),
+    "head_width.specialized_models": (32, 64, 128, 256),
+    "dropout.first_difference": (0.05, 0.40),
+    "dropout.fft": (0.10, 0.40),
+    "dropout.gated_fusion": (0.10, 0.35),
+    "dropout.multi_scale": (0.05, 0.50),
+    "dropout.tcn": (0.05, 0.45),
+    "dropout.shift_robust": (0.05, 0.45),
+    "dropout.ordinal": (0.05, 0.40),
+}
+
+EXTENDED_CNN_ARCHITECTURE_SEARCH_SPACES: dict[str, dict[str, object]] = {
+    "first_difference": {
+        "depth": (2, 4), "width_profile": ("narrow", "balanced", "wide"),
+        "kernel_profile": ("local", "mixed", "broad", "very_broad"),
+        "dilation_profile": ("none", "progressive"),
+        "adaptive_pool_size": (1, 2, 4, 8),
+    },
+    "fft": {
+        "depth": (2, 4), "width_profile": ("narrow", "balanced", "wide"),
+        "kernel_profile": ("local", "mixed", "broad", "very_broad"),
+        "dilation_profile": ("none", "progressive"),
+        "adaptive_pool_size": (1, 2, 4, 8),
+    },
+    "gated_fusion": {
+        "depth": (2, 4), "width_profile": ("narrow", "balanced", "wide"),
+        "kernel_profile": ("local", "mixed", "broad", "very_broad"),
+        "dilation_profile": ("none", "progressive"),
+        "adaptive_pool_size": (1, 2, 4, 8),
+    },
+    "ordinal": {
+        "depth": (2, 4), "width_profile": ("narrow", "balanced", "wide"),
+        "kernel_profile": ("local", "mixed", "broad", "very_broad"),
+        "dilation_profile": ("none", "progressive"),
+        "adaptive_pool_size": (1, 2, 4, 8),
+        "ordinal_temperature": (0.4, 2.0),
+    },
+    "multi_scale": {
+        "output_channels": (24, 48, 64, 96, 128),
+        "multi_scale_profile": ("compact", "balanced", "broad", "very_broad"),
+    },
+    "tcn": {
+        "blocks": (2, 5), "width": (32, 48, 64, 96, 128),
+        "kernel_size": (3, 5, 7, 9),
+        "dilation_profile": ("none", "progressive"),
+    },
+    "shift_robust": {
+        "depth": (2, 5), "width_profile": ("narrow", "balanced", "wide"),
+        "kernel_profile": ("local", "mixed", "broad", "very_broad"),
+    },
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,6 +136,7 @@ class OptunaScanConfig:
 
     scope: ScanScope = "joint"
     n_trials: int = 40
+    n_trials_mode: TrialBudgetMode = "additional"
     timeout_seconds: float | None = None
     study_name: str | None = None
     storage: str | None = None
@@ -405,6 +478,9 @@ def run_optuna_scan(
     preprocessor: Preprocessor,
     device: torch.device | str,
     scan_config: OptunaScanConfig | None = None,
+    model_config_suggester: ModelConfigSuggester | None = None,
+    training_config_suggester: TrainingConfigSuggester | None = None,
+    mlflow_tracking: object | None = None,
 ) -> Any:
     """Optimize CNN and/or training parameters and return an Optuna study.
 
@@ -413,8 +489,12 @@ def run_optuna_scan(
     """
     optuna = _require_optuna()
     cfg = scan_config or OptunaScanConfig()
+    suggest_model = model_config_suggester or suggest_cnn_model_config
+    suggest_training = training_config_suggester or suggest_training_config
     if cfg.scope not in {"joint", "training", "model"}:
         raise ValueError("scope must be 'joint', 'training' or 'model'.")
+    if cfg.n_trials_mode not in {"additional", "total"}:
+        raise ValueError("n_trials_mode must be 'additional' or 'total'.")
     if cfg.n_trials < 1 or cfg.n_startup_trials < 0:
         raise ValueError("n_trials must be positive and n_startup_trials non-negative.")
 
@@ -431,6 +511,16 @@ def run_optuna_scan(
         storage=cfg.storage,
         load_if_exists=cfg.storage is not None,
     )
+    trials_to_run = (
+        cfg.n_trials
+        if cfg.n_trials_mode == "additional"
+        else max(0, cfg.n_trials - len(study.trials))
+    )
+    tracker = None
+    if mlflow_tracking is not None:
+        from .tracking import MLflowTracker
+
+        tracker = MLflowTracker(mlflow_tracking)  # type: ignore[arg-type]
 
     def objective(trial: Any) -> float:
         model_config = dict(base_model_config)
@@ -439,9 +529,9 @@ def run_optuna_scan(
             random_seed=cfg.trial_seed,
         )
         if cfg.scope in {"joint", "model"}:
-            model_config = suggest_cnn_model_config(trial, model_config)
+            model_config = suggest_model(trial, model_config)
         if cfg.scope in {"joint", "training"}:
-            training_config = suggest_training_config(trial, training_config)
+            training_config = suggest_training(trial, training_config)
 
         model, parameter_count = create_model(
             model_type,
@@ -453,39 +543,85 @@ def run_optuna_scan(
 
         def report_epoch(metrics: EpochMetrics) -> None:
             trial.report(metrics.validation_macro_f1, step=metrics.epoch)
+            if tracker is not None:
+                tracker.log_epoch(metrics)
             if trial.should_prune():
                 raise optuna.TrialPruned()
 
-        history = fit_model(
-            model,
-            training_config,
-            training_fold=training_fold,
-            tuning_fold=tuning_fold,
-            device=device,
-            epoch_callback=report_epoch,
+        trial_context = (
+            tracker.trial_run(
+                trial_number=trial.number,
+                model_config=model_config,
+                training_config=training_config,
+                parameter_count=parameter_count,
+            )
+            if tracker is not None else nullcontext()
         )
-        predictions = predict_classes(model, tuning_fold, device=device)
-        metrics = classification_metrics(
-            tuning_fold.targets.cpu().numpy(),
-            predictions,
-        )
-        best_index = history.best_epoch - 1
-        trial.set_user_attr("parameter_count", parameter_count)
-        trial.set_user_attr("best_epoch", history.best_epoch)
-        trial.set_user_attr("tune_loss", history.validation_loss[best_index])
-        trial.set_user_attr("tune_accuracy", metrics["tune_accuracy"])
-        trial.set_user_attr("model_config", _jsonable(model_config))
-        trial.set_user_attr(
-            "training_config",
-            _jsonable(asdict(training_config)),
-        )
-        return metrics["tune_macro_f1"]
+        with trial_context:
+            history = fit_model(
+                model,
+                training_config,
+                training_fold=training_fold,
+                tuning_fold=tuning_fold,
+                device=device,
+                epoch_callback=report_epoch,
+            )
+            predictions = predict_classes(model, tuning_fold, device=device)
+            metrics = classification_metrics(
+                tuning_fold.targets.cpu().numpy(),
+                predictions,
+            )
+            best_index = history.best_epoch - 1
+            trial.set_user_attr("parameter_count", parameter_count)
+            trial.set_user_attr("best_epoch", history.best_epoch)
+            trial.set_user_attr("tune_loss", history.validation_loss[best_index])
+            trial.set_user_attr("tune_accuracy", metrics["tune_accuracy"])
+            trial.set_user_attr("model_config", _jsonable(model_config))
+            trial.set_user_attr(
+                "training_config",
+                _jsonable(asdict(training_config)),
+            )
+            if tracker is not None:
+                tracker.log_trial_summary(
+                    {
+                        "restored_tune_macro_f1": metrics["tune_macro_f1"],
+                        "restored_tune_accuracy": metrics["tune_accuracy"],
+                        "restored_tune_loss": history.validation_loss[best_index],
+                        "best_epoch": history.best_epoch,
+                    }
+                )
+            return metrics["tune_macro_f1"]
 
-    study.optimize(
-        objective,
-        n_trials=cfg.n_trials,
-        timeout=cfg.timeout_seconds,
+    study_context = (
+        tracker.study_run(scope=cfg.scope, study_name=study.study_name)
+        if tracker is not None else nullcontext()
     )
+    with study_context:
+        if trials_to_run:
+            study.optimize(
+                objective,
+                n_trials=trials_to_run,
+                timeout=cfg.timeout_seconds,
+            )
+        if tracker is not None and len(study.trials) > 0:
+            completed_trials = [
+                trial for trial in study.trials
+                if trial.state.name == "COMPLETE" and trial.value is not None
+            ]
+            study_metrics: dict[str, float | int] = {
+                "completed_trials": len(completed_trials),
+                "pruned_trials": sum(
+                    trial.state.name == "PRUNED" for trial in study.trials
+                ),
+                "failed_trials": sum(
+                    trial.state.name == "FAIL" for trial in study.trials
+                ),
+            }
+            if completed_trials:
+                study_metrics["best_tune_macro_f1"] = max(
+                    float(trial.value) for trial in completed_trials
+                )
+            tracker.log_trial_summary(study_metrics)
     return study
 
 
@@ -613,6 +749,248 @@ def suggest_cnn_model_config(
         residual=trial.suggest_categorical("model.residual", [False, True]),
     )
     return suggested
+
+
+def suggest_extended_cnn_model_config(
+    trial: Any,
+    base: Mapping[str, object],
+    *,
+    architectures: Sequence[str] = (
+        "first_difference",
+        "fft",
+        "gated_fusion",
+        "multi_scale",
+        "tcn",
+        "shift_robust",
+        "ordinal",
+    ),
+) -> dict[str, object]:
+    """Suggest only parameters that affect one fixed Extended-CNN architecture."""
+    supported = set(EXTENDED_CNN_ARCHITECTURE_SEARCH_SPACES)
+    choices = tuple(dict.fromkeys(architectures))
+    if not choices or not set(choices).issubset(supported):
+        raise ValueError(
+            "architectures must be a non-empty subset of "
+            f"{sorted(supported)}."
+        )
+    if len(choices) != 1:
+        raise ValueError(
+            "Extended CNN tuning uses one architecture per Optuna study so that "
+            "every architecture receives an explicit trial budget."
+        )
+    architecture = trial.suggest_categorical("model.architecture", choices)
+    space = EXTENDED_CNN_ARCHITECTURE_SEARCH_SPACES[architecture]
+    width_profiles = {
+        "narrow": (12, 24, 40, 64, 80),
+        "balanced": (20, 40, 64, 96, 128),
+        "wide": (32, 64, 96, 144, 192),
+    }
+    kernel_profiles = {
+        "local": (5, 3, 3, 3, 3),
+        "mixed": (9, 7, 5, 3, 3),
+        "broad": (15, 11, 7, 5, 3),
+        "very_broad": (21, 15, 11, 7, 5),
+    }
+    branch_architectures = {"first_difference", "fft", "gated_fusion", "ordinal"}
+    head_width_key = (
+        "head_width.branch_models"
+        if architecture in branch_architectures else "head_width.specialized_models"
+    )
+    head_width = trial.suggest_categorical(
+        "model.head_width",
+        EXTENDED_CNN_COMMON_MODEL_SEARCH_SPACE[head_width_key],
+    )
+    head_depth = trial.suggest_categorical(
+        "model.head_depth",
+        EXTENDED_CNN_COMMON_MODEL_SEARCH_SPACE["head_depth"],
+    )
+    hidden_dims = (
+        (head_width,)
+        if head_depth == 1 else (head_width, max(16, head_width // 4))
+    )
+    dropout_bounds = EXTENDED_CNN_COMMON_MODEL_SEARCH_SPACE[
+        f"dropout.{architecture}"
+    ]
+    suggested = dict(base)
+    suggested.update(
+        architecture=architecture,
+        hidden_dims=hidden_dims,
+        dropout=trial.suggest_float(
+            "model.dropout", dropout_bounds[0], dropout_bounds[1]
+        ),
+    )
+
+    if architecture in branch_architectures:
+        depth = trial.suggest_int("model.depth", *space["depth"])
+        width_profile = trial.suggest_categorical(
+            "model.width_profile", space["width_profile"]
+        )
+        kernel_profile = trial.suggest_categorical(
+            "model.kernel_profile", space["kernel_profile"]
+        )
+        dilation_profile = trial.suggest_categorical(
+            "model.dilation_profile", space["dilation_profile"]
+        )
+        dilations = (
+            (1, 2, 4, 8, 16) if dilation_profile == "progressive"
+            else (1, 1, 1, 1, 1)
+        )
+        suggested.update(
+            branch_channels=width_profiles[width_profile][:depth],
+            kernel_sizes=kernel_profiles[kernel_profile][:depth],
+            dilations=dilations[:depth],
+            adaptive_pool_size=trial.suggest_categorical(
+                "model.adaptive_pool_size", space["adaptive_pool_size"]
+            ),
+        )
+    elif architecture == "multi_scale":
+        output_channels = trial.suggest_categorical(
+            "model.output_channels", space["output_channels"]
+        )
+        scale_profile = trial.suggest_categorical(
+            "model.multi_scale_profile", space["multi_scale_profile"]
+        )
+        suggested.update(
+            branch_channels=(output_channels,), kernel_sizes=(3,), dilations=(1,),
+            adaptive_pool_size=1,
+            multi_scale_kernel_sizes={
+                "compact": (3, 7),
+                "balanced": (3, 7, 15),
+                "broad": (3, 9, 21),
+                "very_broad": (3, 11, 25),
+            }[scale_profile],
+        )
+    elif architecture == "tcn":
+        blocks = trial.suggest_int("model.tcn_blocks", *space["blocks"])
+        width = trial.suggest_categorical("model.tcn_width", space["width"])
+        kernel_size = trial.suggest_categorical(
+            "model.tcn_kernel_size", space["kernel_size"]
+        )
+        dilation_profile = trial.suggest_categorical(
+            "model.tcn_dilation_profile", space["dilation_profile"]
+        )
+        dilations = (
+            (1, 2, 4, 8, 16) if dilation_profile == "progressive"
+            else (1, 1, 1, 1, 1)
+        )
+        suggested.update(
+            branch_channels=(width,) * blocks,
+            kernel_sizes=(kernel_size,) * blocks,
+            dilations=dilations[:blocks],
+            adaptive_pool_size=1,
+        )
+    else:
+        depth = trial.suggest_int("model.shift_depth", *space["depth"])
+        width_profile = trial.suggest_categorical(
+            "model.shift_width_profile", space["width_profile"]
+        )
+        kernel_profile = trial.suggest_categorical(
+            "model.shift_kernel_profile", space["kernel_profile"]
+        )
+        suggested.update(
+            branch_channels=width_profiles[width_profile][:depth],
+            kernel_sizes=kernel_profiles[kernel_profile][:depth],
+            dilations=(1,) * depth,
+            adaptive_pool_size=1,
+        )
+    if architecture == "ordinal":
+        temperature_bounds = space["ordinal_temperature"]
+        suggested["ordinal_temperature"] = trial.suggest_float(
+            "model.ordinal_temperature",
+            temperature_bounds[0],
+            temperature_bounds[1],
+            log=True,
+        )
+    return suggested
+
+
+def suggest_extended_cnn_training_config(
+    trial: Any,
+    base: TrainingConfig,
+) -> TrainingConfig:
+    """Suggest the shared training search space for per-architecture studies."""
+    space = EXTENDED_CNN_TRAINING_SEARCH_SPACE
+    learning_rate = trial.suggest_float(
+        "training.learning_rate", *space["learning_rate"], log=True
+    )
+    use_weight_decay = trial.suggest_categorical(
+        "training.use_weight_decay", space["use_weight_decay"]
+    )
+    weight_decay = (
+        trial.suggest_float(
+            "training.weight_decay", *space["weight_decay"], log=True
+        )
+        if use_weight_decay else 0.0
+    )
+    scheduler = trial.suggest_categorical(
+        "training.scheduler", space["scheduler"]
+    )
+    step_size = base.scheduler_step_size
+    decay = base.learning_rate_decay
+    warmup_epochs = 0
+    if scheduler == "step":
+        step_size = trial.suggest_categorical(
+            "training.scheduler_step_size", space["scheduler_step_size"]
+        )
+        decay = trial.suggest_float(
+            "training.learning_rate_decay", *space["learning_rate_decay"]
+        )
+    elif scheduler == "warmup_cosine":
+        warmup_choices = tuple(
+            value for value in space["warmup_epochs"] if value < base.epochs
+        )
+        warmup_epochs = trial.suggest_categorical(
+            "training.warmup_epochs", warmup_choices
+        )
+    return replace(
+        base,
+        learning_rate=learning_rate,
+        weight_decay=weight_decay,
+        batch_size=trial.suggest_categorical(
+            "training.batch_size", space["batch_size"]
+        ),
+        scheduler_strategy=scheduler,
+        scheduler_step_size=step_size,
+        learning_rate_decay=decay,
+        warmup_epochs=warmup_epochs,
+        class_balance_strategy=trial.suggest_categorical(
+            "training.class_balance_strategy", space["class_balance_strategy"]
+        ),
+        gradient_clip_norm=trial.suggest_categorical(
+            "training.gradient_clip_norm", space["gradient_clip_norm"]
+        ),
+        minimum_learning_rate=min(1e-6, learning_rate / 10),
+    )
+
+
+def extended_cnn_search_space_frame() -> pd.DataFrame:
+    """Return the declared Extended-CNN search boundaries for display."""
+    rows: list[dict[str, object]] = []
+    for parameter, values in EXTENDED_CNN_TRAINING_SEARCH_SPACE.items():
+        rows.append({"scope": "training", "parameter": parameter, "values": values})
+    for parameter, values in EXTENDED_CNN_COMMON_MODEL_SEARCH_SPACE.items():
+        rows.append({"scope": "model.common", "parameter": parameter, "values": values})
+    for architecture, parameters in EXTENDED_CNN_ARCHITECTURE_SEARCH_SPACES.items():
+        for parameter, values in parameters.items():
+            rows.append(
+                {"scope": architecture, "parameter": parameter, "values": values}
+            )
+    return pd.DataFrame(rows).set_index(["scope", "parameter"])
+
+
+def best_trials_per_architecture(study: Any) -> tuple[Any, ...]:
+    """Return the best completed Optuna trial for each sampled architecture."""
+    best: dict[str, Any] = {}
+    for trial in study.trials:
+        if trial.state.name != "COMPLETE" or trial.value is None:
+            continue
+        architecture = trial.params.get("model.architecture")
+        if not isinstance(architecture, str):
+            continue
+        current = best.get(architecture)
+        if current is None or float(trial.value) > float(current.value):
+            best[architecture] = trial
+    return tuple(sorted(best.values(), key=lambda trial: float(trial.value), reverse=True))
 
 
 def _require_optuna() -> Any:

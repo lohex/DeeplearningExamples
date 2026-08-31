@@ -43,9 +43,10 @@ The classification project contains the main end-to-end engineering example:
 
 1. [`01_data_visualization.ipynb`](projects/pytorch_timecourse_classification/notebooks/01_data_visualization.ipynb) establishes hypotheses from only the fixed training fold, statistical trajectory features and dose-dependent clusters.
 2. [`02_cnn_training.ipynb`](projects/pytorch_timecourse_classification/notebooks/02_cnn_training.ipynb) asks how capacity and training hyperparameters affect stability, convergence and over- or underfitting.
-3. [`02_extended_cnns_training.ipynb`](projects/pytorch_timecourse_classification/notebooks/02_extended_cnns_training.ipynb) tests whether targeted temporal inductive biases add more value than simply scaling a CNN.
+3. [`02_extended_cnns_training.ipynb`](projects/pytorch_timecourse_classification/notebooks/02_extended_cnns_training.ipynb) demonstrates controlled architecture screening, equal-budget architecture-specific Optuna tuning, MLflow tracking and multi-seed confirmation.
 4. [`02_attention_training.ipynb`](projects/pytorch_timecourse_classification/notebooks/02_attention_training.ipynb) studies long-range context, positional information and the limits of attention as an explanation.
 5. [`03_model_family_comparison.ipynb`](projects/pytorch_timecourse_classification/notebooks/03_model_family_comparison.ipynb) separates validation-based model selection from the final test comparison and broadens evaluation beyond accuracy.
+6. [`04_explainable_ai.ipynb`](projects/pytorch_timecourse_classification/notebooks/04_explainable_ai.ipynb) explains the tune-selected top three Extended CNNs with Grad-CAM, Integrated Gradients, temporal occlusion and deletion controls.
 
 The GAN notebook is [`projects/pytorch_cdgan/notebooks/cdgan.ipynb`](projects/pytorch_cdgan/notebooks/cdgan.ipynb). The BBBC021 project currently contains the dataset-construction notebook documented in its project README.
 
@@ -61,11 +62,12 @@ Add optional experiment tuning or image-dataset dependencies as needed:
 
 ```bash
 uv sync --extra torch --extra tuning
+uv sync --extra torch --extra experiment
 uv sync --extra bbbc021
 uv sync --all-extras
 ```
 
-The equivalent editable pip installation is `python -m pip install -e ".[torch,tuning]"`.
+The equivalent editable pip installation for tracked tuning is `python -m pip install -e ".[torch,experiment]"`.
 
 ## Design conventions
 
