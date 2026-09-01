@@ -1,5 +1,6 @@
 """Shared preparation of fixed time-course classification folds."""
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 import numpy as np
@@ -57,18 +58,22 @@ def preprocessors_compatible(
     """Check semantic compatibility without requiring bit-identical floats."""
     return (
         reference.class_names == candidate.class_names
-        and bool(np.isclose(
-            reference.signal_mean,
-            candidate.signal_mean,
-            rtol=relative_tolerance,
-            atol=absolute_tolerance,
-        ))
-        and bool(np.isclose(
-            reference.signal_std,
-            candidate.signal_std,
-            rtol=relative_tolerance,
-            atol=absolute_tolerance,
-        ))
+        and bool(
+            np.isclose(
+                reference.signal_mean,
+                candidate.signal_mean,
+                rtol=relative_tolerance,
+                atol=absolute_tolerance,
+            )
+        )
+        and bool(
+            np.isclose(
+                reference.signal_std,
+                candidate.signal_std,
+                rtol=relative_tolerance,
+                atol=absolute_tolerance,
+            )
+        )
     )
 
 
@@ -78,18 +83,8 @@ def load_training_folds() -> tuple[FoldData, FoldData, Preprocessor]:
     tune_trajectories, tune_doses, tune_years = load_data("validate")
     preprocessor = fit_preprocessor(train_trajectories, train_doses)
     return (
-        _prepare_fold(
-            train_trajectories,
-            train_doses,
-            train_years,
-            preprocessor,
-        ),
-        _prepare_fold(
-            tune_trajectories,
-            tune_doses,
-            tune_years,
-            preprocessor,
-        ),
+        _prepare_fold(train_trajectories, train_doses, train_years, preprocessor),
+        _prepare_fold(tune_trajectories, tune_doses, tune_years, preprocessor),
         preprocessor,
     )
 
@@ -118,6 +113,30 @@ def fit_preprocessor(
             "Training trajectories must have a finite, positive standard deviation."
         )
     return Preprocessor(class_names, signal_mean, signal_std)
+
+
+def subset_fold(fold: FoldData, indices: Sequence[int] | IntArray) -> FoldData:
+    """Select the same sample indices from all raw and model-ready fold fields."""
+    resolved = np.asarray(indices, dtype=np.int64)
+    if resolved.ndim != 1 or len(resolved) == 0:
+        raise ValueError("indices must be a non-empty one-dimensional sequence.")
+    if len(np.unique(resolved)) != len(resolved):
+        raise ValueError("indices must be unique.")
+    if resolved.min() < 0 or resolved.max() >= len(fold.targets):
+        raise IndexError("indices contain values outside the fold.")
+    feature_indices = torch.as_tensor(
+        resolved, dtype=torch.long, device=fold.features.device
+    )
+    target_indices = torch.as_tensor(
+        resolved, dtype=torch.long, device=fold.targets.device
+    )
+    return FoldData(
+        trajectories=fold.trajectories[resolved],
+        doses=fold.doses[resolved],
+        years=fold.years[resolved],
+        features=fold.features.index_select(0, feature_indices),
+        targets=fold.targets.index_select(0, target_indices),
+    )
 
 
 def _prepare_fold(
