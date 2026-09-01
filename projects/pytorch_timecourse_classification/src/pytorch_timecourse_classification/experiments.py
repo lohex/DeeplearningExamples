@@ -18,6 +18,15 @@ from .training import EpochCallback, TrainingConfig, TrainingHistory, train
 ModelFactory = Callable[..., nn.Module]
 
 
+def trainable_parameter_count(model: nn.Module) -> int:
+    """Return the number of trainable scalar parameters in a model."""
+    return sum(
+        parameter.numel()
+        for parameter in model.parameters()
+        if parameter.requires_grad
+    )
+
+
 def create_model(
     model_type: ModelFactory,
     *,
@@ -35,11 +44,7 @@ def create_model(
         num_classes=num_classes,
         **model_config,
     )
-    parameter_count = sum(
-        parameter.numel()
-        for parameter in model.parameters()
-        if parameter.requires_grad
-    )
+    parameter_count = trainable_parameter_count(model)
     print("model_config:", getattr(model, "model_config", model_config))
     print(f"trainable parameters: {parameter_count:,}")
     return model, parameter_count
