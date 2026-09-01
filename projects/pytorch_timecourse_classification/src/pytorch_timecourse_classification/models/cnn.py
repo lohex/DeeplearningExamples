@@ -1,6 +1,29 @@
 """Convolutional classifier for single-cell time courses."""
 
+from math import isfinite
+
 from torch import Tensor, nn
+
+
+BASE_CNN_CHANNELS = (32, 64, 128)
+BASE_CNN_HIDDEN_DIM = 64
+
+
+def scaled_cnn_config(width_multiplier: float) -> dict[str, object]:
+    """Scale CNN channels and head width while keeping depth and kernels fixed."""
+    if not isfinite(width_multiplier) or width_multiplier <= 0:
+        raise ValueError("width_multiplier must be finite and positive.")
+    channels = tuple(
+        int(round(channel * width_multiplier))
+        for channel in BASE_CNN_CHANNELS
+    )
+    hidden_dim = int(round(BASE_CNN_HIDDEN_DIM * width_multiplier))
+    if min(*channels, hidden_dim) < 1:
+        raise ValueError("width_multiplier produces a zero-width layer.")
+    return {
+        "channels": channels,
+        "hidden_dim": hidden_dim,
+    }
 
 
 class CNNClassifier(nn.Module):
@@ -13,11 +36,11 @@ class CNNClassifier(nn.Module):
         *,
         input_length: int = 289,
         num_classes: int = 6,
-        channels: tuple[int, ...] = (32, 64, 128),
+        channels: tuple[int, ...] = BASE_CNN_CHANNELS,
         kernel_sizes: tuple[int, ...] = (9, 7, 5),
         dilations: tuple[int, ...] | None = None,
         pool_size: int = 2,
-        hidden_dim: int = 64,
+        hidden_dim: int = BASE_CNN_HIDDEN_DIM,
         dropout: float = 0.2,
         residual: bool = False,
     ) -> None:
