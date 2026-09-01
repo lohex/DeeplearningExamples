@@ -3,7 +3,7 @@
 from torch import nn
 
 from .attention import AttentionClassifier
-from .cnn import CNNClassifier
+from .cnn import CNNClassifier, scaled_cnn_config
 from .cnn_attention_pooling import CNNAttentionPoolingClassifier
 from .extended_cnns import ExtendedCNNClassifier
 from .hierarchical_patch_transformer import HierarchicalPatchTransformerClassifier
@@ -39,4 +39,5 @@ __all__ = [
     "HierarchicalPatchTransformerClassifier",
     "MODEL_TYPES",
     "build_model",
+    "scaled_cnn_config",
 ]
