@@ -25,12 +25,19 @@ torch = [
 tuning = [
     "optuna>=4.0",
 ]
+experiment = [
+    "captum>=0.8",
+    "mlflow>=3.0",
+    "optuna>=4.0",
+]
 bbbc021 = [
     "pillow>=9.5",
     "requests>=2.28",
     "tqdm>=4.64",
 ]
 all = [
+    "captum>=0.8",
+    "mlflow>=3.0",
     "pillow>=9.5",
     "requests>=2.28",
     "torch>=2.0",

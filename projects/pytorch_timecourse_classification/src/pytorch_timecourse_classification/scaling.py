@@ -4,6 +4,7 @@ from collections.abc import Mapping, Sequence
 from contextlib import redirect_stdout
 from dataclasses import dataclass, replace
 from io import StringIO
+from json import dumps
 from time import perf_counter
 
 import numpy as np
@@ -44,7 +45,12 @@ class MemorizationResult:
     final_loss: float
     final_accuracy: float
     best_epoch: int
+    validation_best_epoch: int | None
     passed: bool
+    loss_curve: tuple[float, ...]
+    accuracy_curve: tuple[float, ...]
+    validation_loss_curve: tuple[float, ...]
+    validation_accuracy_curve: tuple[float, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,6 +120,7 @@ def run_memorization_check(
     *,
     model_type: type[nn.Module],
     training_fold: FoldData,
+    validation_fold: FoldData | None = None,
     preprocessor: Preprocessor,
     base_model_config: Mapping[str, object],
     width_multiplier: float = 1.0,
@@ -175,19 +182,37 @@ def run_memorization_check(
             gradient_clip_norm=None,
         ),
         training_fold=small_fold,
-        tuning_fold=small_fold,
+        tuning_fold=validation_fold or small_fold,
         device=resolved_device,
     )
-    best_index = history.best_epoch - 1
-    final_accuracy = float(history.validation_accuracy[best_index])
+    if validation_fold is None:
+        loss_curve = history.validation_loss
+        accuracy_curve = history.validation_accuracy
+        validation_loss_curve: tuple[float, ...] = ()
+        validation_accuracy_curve: tuple[float, ...] = ()
+        validation_best_epoch = None
+        best_index = history.best_epoch - 1
+    else:
+        loss_curve = history.training_loss
+        accuracy_curve = history.training_accuracy
+        validation_loss_curve = history.validation_loss
+        validation_accuracy_curve = history.validation_accuracy
+        validation_best_epoch = history.best_epoch
+        best_index = int(np.argmin(loss_curve))
+    final_accuracy = float(accuracy_curve[best_index])
     return MemorizationResult(
         n_samples=len(small_fold.targets),
         parameter_count=parameter_count,
         initial_loss=initial_loss,
-        final_loss=float(history.validation_loss[best_index]),
+        final_loss=float(loss_curve[best_index]),
         final_accuracy=final_accuracy,
-        best_epoch=history.best_epoch,
+        best_epoch=best_index + 1,
+        validation_best_epoch=validation_best_epoch,
         passed=final_accuracy >= accuracy_threshold,
+        loss_curve=loss_curve,
+        accuracy_curve=accuracy_curve,
+        validation_loss_curve=validation_loss_curve,
+        validation_accuracy_curve=validation_accuracy_curve,
     )
 
 
@@ -376,7 +401,15 @@ def _run_scaling_cell(
                 device=device,
             )
     except FloatingPointError as error:
-        row = _failed_row(training_fold, parameter_count, model_seed, started, device, error)
+        row = _failed_row(
+            training_fold,
+            parameter_count,
+            model_seed,
+            training_config,
+            started,
+            device,
+            error,
+        )
         del model
         _clear_cuda_cache(device)
         return row
@@ -392,6 +425,14 @@ def _run_scaling_cell(
         "tune_macro_f1": float(history.validation_macro_f1[best]),
         "best_epoch": history.best_epoch,
         "epochs_run": len(history.training_loss),
+        "batch_size": training_config.batch_size,
+        "max_epochs": training_config.epochs,
+        "patience": training_config.patience,
+        "scheduler_strategy": training_config.scheduler_strategy,
+        "training_loss_curve": dumps(history.training_loss),
+        "tune_loss_curve": dumps(history.validation_loss),
+        "training_accuracy_curve": dumps(history.training_accuracy),
+        "tune_accuracy_curve": dumps(history.validation_accuracy),
         "duration_seconds": perf_counter() - started,
         "peak_memory_bytes": _peak_memory_bytes(device),
         "failed": False,
@@ -406,6 +447,7 @@ def _failed_row(
     training_fold: FoldData,
     parameter_count: int,
     model_seed: int,
+    training_config: TrainingConfig,
     started: float,
     device: torch.device,
     error: FloatingPointError,
@@ -420,6 +462,14 @@ def _failed_row(
         "tune_macro_f1": np.nan,
         "best_epoch": 0,
         "epochs_run": 0,
+        "batch_size": training_config.batch_size,
+        "max_epochs": training_config.epochs,
+        "patience": training_config.patience,
+        "scheduler_strategy": training_config.scheduler_strategy,
+        "training_loss_curve": "[]",
+        "tune_loss_curve": "[]",
+        "training_accuracy_curve": "[]",
+        "tune_accuracy_curve": "[]",
         "duration_seconds": perf_counter() - started,
         "peak_memory_bytes": _peak_memory_bytes(device),
         "failed": True,
