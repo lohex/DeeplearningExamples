@@ -1,4 +1,4 @@
-"""Controlled ablations and optional Optuna scans for CNN experiments."""
+"""Controlled ablations and optional Optuna scans for time-course models."""
 
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import nullcontext
@@ -90,6 +90,58 @@ EXTENDED_CNN_ARCHITECTURE_SEARCH_SPACES: dict[str, dict[str, object]] = {
     "shift_robust": {
         "depth": (2, 5), "width_profile": ("narrow", "balanced", "wide"),
         "kernel_profile": ("local", "mixed", "broad", "very_broad"),
+    },
+}
+
+
+ATTENTION_TRAINING_SEARCH_SPACE: dict[str, object] = {
+    "learning_rate": (5e-5, 1e-3),
+    "use_weight_decay": (False, True),
+    "weight_decay": (1e-6, 2e-3),
+    "scheduler": ("none", "step", "cosine", "warmup_cosine"),
+    "scheduler_step_size": (8, 12, 16, 20, 24),
+    "learning_rate_decay": (0.5, 0.9),
+    "warmup_epochs": (3, 5, 10, 15),
+    # Full-resolution attention is quadratic in sequence length. These choices
+    # avoid carrying the CNN-oriented 256/512 batches into this search.
+    "batch_size": (16, 32, 64, 128),
+    "class_balance_strategy": ("none", "weighted_loss", "balanced_sampler"),
+    "gradient_clip_norm": (1.0, 5.0),
+}
+
+
+ATTENTION_MODEL_SEARCH_SPACES: dict[str, dict[str, object]] = {
+    "mean_attention": {
+        "embedding_dim": (24, 32, 48, 64, 96, 128),
+        "num_heads": (2, 4, 8),
+        "num_layers": (1, 5),
+        "feedforward_multiplier": (2, 3, 4),
+        "dropout": (0.05, 0.40),
+    },
+    "cls_attention": {
+        "embedding_dim": (24, 32, 48, 64, 96, 128),
+        "num_heads": (2, 4, 8),
+        "num_layers": (1, 5),
+        "feedforward_multiplier": (2, 3, 4),
+        "dropout": (0.05, 0.50),
+    },
+    "cnn_attention_pooling": {
+        "depth": (2, 4),
+        "width_profile": ("narrow", "balanced", "wide"),
+        "kernel_profile": ("local", "mixed", "broad"),
+        "stride_profile": ("none", "progressive"),
+        "attention_hidden_dim": (16, 32, 64, 128),
+        "classifier_hidden_dim": (32, 64, 128, 256),
+        "dropout": (0.05, 0.50),
+    },
+    "hierarchical_patch": {
+        "patch_size": (4, 8, 16),
+        "embedding_dim": (24, 32, 48, 64, 96),
+        "num_heads": (2, 4, 8),
+        "stage1_layers": (1, 3),
+        "stage2_layers": (1, 3),
+        "feedforward_multiplier": (2, 3, 4),
+        "dropout": (0.05, 0.45),
     },
 }
 
@@ -566,6 +618,13 @@ def run_optuna_scan(
                 device=device,
                 epoch_callback=report_epoch,
             )
+            training_predictions = predict_classes(
+                model, training_fold, device=device
+            )
+            training_metrics = classification_metrics(
+                training_fold.targets.cpu().numpy(),
+                training_predictions,
+            )
             predictions = predict_classes(model, tuning_fold, device=device)
             metrics = classification_metrics(
                 tuning_fold.targets.cpu().numpy(),
@@ -576,6 +635,16 @@ def run_optuna_scan(
             trial.set_user_attr("best_epoch", history.best_epoch)
             trial.set_user_attr("tune_loss", history.validation_loss[best_index])
             trial.set_user_attr("tune_accuracy", metrics["tune_accuracy"])
+            trial.set_user_attr(
+                "training_accuracy", training_metrics["tune_accuracy"]
+            )
+            trial.set_user_attr(
+                "training_macro_f1", training_metrics["tune_macro_f1"]
+            )
+            trial.set_user_attr(
+                "macro_f1_gap",
+                training_metrics["tune_macro_f1"] - metrics["tune_macro_f1"],
+            )
             trial.set_user_attr("model_config", _jsonable(model_config))
             trial.set_user_attr(
                 "training_config",
@@ -587,6 +656,13 @@ def run_optuna_scan(
                         "restored_tune_macro_f1": metrics["tune_macro_f1"],
                         "restored_tune_accuracy": metrics["tune_accuracy"],
                         "restored_tune_loss": history.validation_loss[best_index],
+                        "restored_training_macro_f1": training_metrics[
+                            "tune_macro_f1"
+                        ],
+                        "restored_macro_f1_gap": (
+                            training_metrics["tune_macro_f1"]
+                            - metrics["tune_macro_f1"]
+                        ),
                         "best_epoch": history.best_epoch,
                     }
                 )
@@ -971,6 +1047,199 @@ def extended_cnn_search_space_frame() -> pd.DataFrame:
     for parameter, values in EXTENDED_CNN_COMMON_MODEL_SEARCH_SPACE.items():
         rows.append({"scope": "model.common", "parameter": parameter, "values": values})
     for architecture, parameters in EXTENDED_CNN_ARCHITECTURE_SEARCH_SPACES.items():
+        for parameter, values in parameters.items():
+            rows.append(
+                {"scope": architecture, "parameter": parameter, "values": values}
+            )
+    return pd.DataFrame(rows).set_index(["scope", "parameter"])
+
+
+def suggest_attention_model_config(
+    trial: Any,
+    base: Mapping[str, object],
+    *,
+    architecture: str,
+) -> dict[str, object]:
+    """Suggest valid model parameters for one fixed attention architecture."""
+    if architecture not in ATTENTION_MODEL_SEARCH_SPACES:
+        raise ValueError(
+            "architecture must be one of "
+            f"{sorted(ATTENTION_MODEL_SEARCH_SPACES)}."
+        )
+    selected_architecture = trial.suggest_categorical(
+        "model.architecture", (architecture,)
+    )
+    space = ATTENTION_MODEL_SEARCH_SPACES[selected_architecture]
+    suggested = dict(base)
+
+    if selected_architecture in {"mean_attention", "cls_attention"}:
+        embedding_dim = trial.suggest_categorical(
+            "model.embedding_dim", space["embedding_dim"]
+        )
+        eligible_heads = tuple(
+            heads for heads in space["num_heads"]
+            if embedding_dim % heads == 0
+        )
+        feedforward_multiplier = trial.suggest_categorical(
+            "model.feedforward_multiplier", space["feedforward_multiplier"]
+        )
+        suggested.update(
+            embedding_dim=embedding_dim,
+            num_heads=trial.suggest_categorical(
+                "model.num_heads", eligible_heads
+            ),
+            num_layers=trial.suggest_int(
+                "model.num_layers", *space["num_layers"]
+            ),
+            feedforward_dim=embedding_dim * feedforward_multiplier,
+            dropout=trial.suggest_float(
+                "model.dropout", *space["dropout"]
+            ),
+            pooling=(
+                "mean" if selected_architecture == "mean_attention" else "cls"
+            ),
+            norm_first=True,
+        )
+        return suggested
+
+    if selected_architecture == "cnn_attention_pooling":
+        depth = trial.suggest_int("model.depth", *space["depth"])
+        width_profile = trial.suggest_categorical(
+            "model.width_profile", space["width_profile"]
+        )
+        kernel_profile = trial.suggest_categorical(
+            "model.kernel_profile", space["kernel_profile"]
+        )
+        stride_profile = trial.suggest_categorical(
+            "model.stride_profile", space["stride_profile"]
+        )
+        channels = {
+            "narrow": (16, 32, 48, 64),
+            "balanced": (24, 48, 72, 96),
+            "wide": (32, 64, 96, 128),
+        }[width_profile]
+        kernels = {
+            "local": (5, 3, 3, 3),
+            "mixed": (9, 7, 5, 3),
+            "broad": (15, 11, 7, 5),
+        }[kernel_profile]
+        strides = (
+            (2, 2, 1, 1) if stride_profile == "progressive"
+            else (1, 1, 1, 1)
+        )
+        suggested.update(
+            channels=channels[:depth],
+            kernel_sizes=kernels[:depth],
+            strides=strides[:depth],
+            attention_hidden_dim=trial.suggest_categorical(
+                "model.attention_hidden_dim", space["attention_hidden_dim"]
+            ),
+            classifier_hidden_dim=trial.suggest_categorical(
+                "model.classifier_hidden_dim", space["classifier_hidden_dim"]
+            ),
+            dropout=trial.suggest_float(
+                "model.dropout", *space["dropout"]
+            ),
+        )
+        return suggested
+
+    embedding_dim = trial.suggest_categorical(
+        "model.embedding_dim", space["embedding_dim"]
+    )
+    eligible_heads = tuple(
+        heads for heads in space["num_heads"]
+        if embedding_dim % heads == 0
+    )
+    suggested.update(
+        patch_size=trial.suggest_categorical(
+            "model.patch_size", space["patch_size"]
+        ),
+        embedding_dim=embedding_dim,
+        num_heads=trial.suggest_categorical(
+            "model.num_heads", eligible_heads
+        ),
+        stage1_layers=trial.suggest_int(
+            "model.stage1_layers", *space["stage1_layers"]
+        ),
+        stage2_layers=trial.suggest_int(
+            "model.stage2_layers", *space["stage2_layers"]
+        ),
+        feedforward_multiplier=trial.suggest_categorical(
+            "model.feedforward_multiplier", space["feedforward_multiplier"]
+        ),
+        dropout=trial.suggest_float(
+            "model.dropout", *space["dropout"]
+        ),
+        norm_first=True,
+    )
+    return suggested
+
+
+def suggest_attention_training_config(
+    trial: Any,
+    base: TrainingConfig,
+) -> TrainingConfig:
+    """Suggest a memory-conscious training space for attention studies."""
+    space = ATTENTION_TRAINING_SEARCH_SPACE
+    learning_rate = trial.suggest_float(
+        "training.learning_rate", *space["learning_rate"], log=True
+    )
+    use_weight_decay = trial.suggest_categorical(
+        "training.use_weight_decay", space["use_weight_decay"]
+    )
+    weight_decay = (
+        trial.suggest_float(
+            "training.weight_decay", *space["weight_decay"], log=True
+        )
+        if use_weight_decay else 0.0
+    )
+    scheduler = trial.suggest_categorical(
+        "training.scheduler", space["scheduler"]
+    )
+    step_size = base.scheduler_step_size
+    decay = base.learning_rate_decay
+    warmup_epochs = 0
+    if scheduler == "step":
+        step_size = trial.suggest_categorical(
+            "training.scheduler_step_size", space["scheduler_step_size"]
+        )
+        decay = trial.suggest_float(
+            "training.learning_rate_decay", *space["learning_rate_decay"]
+        )
+    elif scheduler == "warmup_cosine":
+        warmup_choices = tuple(
+            value for value in space["warmup_epochs"] if value < base.epochs
+        )
+        warmup_epochs = trial.suggest_categorical(
+            "training.warmup_epochs", warmup_choices
+        )
+    return replace(
+        base,
+        learning_rate=learning_rate,
+        weight_decay=weight_decay,
+        batch_size=trial.suggest_categorical(
+            "training.batch_size", space["batch_size"]
+        ),
+        scheduler_strategy=scheduler,
+        scheduler_step_size=step_size,
+        learning_rate_decay=decay,
+        warmup_epochs=warmup_epochs,
+        class_balance_strategy=trial.suggest_categorical(
+            "training.class_balance_strategy", space["class_balance_strategy"]
+        ),
+        gradient_clip_norm=trial.suggest_categorical(
+            "training.gradient_clip_norm", space["gradient_clip_norm"]
+        ),
+        minimum_learning_rate=min(1e-6, learning_rate / 10),
+    )
+
+
+def attention_search_space_frame() -> pd.DataFrame:
+    """Return the declared attention search boundaries for display."""
+    rows: list[dict[str, object]] = []
+    for parameter, values in ATTENTION_TRAINING_SEARCH_SPACE.items():
+        rows.append({"scope": "training", "parameter": parameter, "values": values})
+    for architecture, parameters in ATTENTION_MODEL_SEARCH_SPACES.items():
         for parameter, values in parameters.items():
             rows.append(
                 {"scope": architecture, "parameter": parameter, "values": values}

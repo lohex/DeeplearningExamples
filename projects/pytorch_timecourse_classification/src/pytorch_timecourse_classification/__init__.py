@@ -20,12 +20,15 @@ from .models import (
 from .training import EpochMetrics, TrainingConfig, TrainingHistory, train
 from .tracking import MLflowTrackingConfig
 from .tuning import (
+    ATTENTION_MODEL_SEARCH_SPACES,
+    ATTENTION_TRAINING_SEARCH_SPACE,
     AblationSpec,
     EXTENDED_CNN_ARCHITECTURE_SEARCH_SPACES,
     EXTENDED_CNN_COMMON_MODEL_SEARCH_SPACE,
     EXTENDED_CNN_TRAINING_SEARCH_SPACE,
     OptunaScanConfig,
     add_paired_reference_deltas,
+    attention_search_space_frame,
     crossed_ablation_specs,
     optuna_parameter_importances,
     run_ablations,
@@ -35,6 +38,8 @@ from .tuning import (
     extended_cnn_search_space_frame,
     suggest_extended_cnn_model_config,
     suggest_extended_cnn_training_config,
+    suggest_attention_model_config,
+    suggest_attention_training_config,
     summarize_ablations,
 )
 
@@ -60,10 +65,13 @@ __all__ = [
     "temporal_occlusion",
     "MLflowTrackingConfig",
     "AblationSpec",
+    "ATTENTION_MODEL_SEARCH_SPACES",
+    "ATTENTION_TRAINING_SEARCH_SPACE",
     "EXTENDED_CNN_ARCHITECTURE_SEARCH_SPACES",
     "EXTENDED_CNN_COMMON_MODEL_SEARCH_SPACE",
     "EXTENDED_CNN_TRAINING_SEARCH_SPACE",
     "add_paired_reference_deltas",
+    "attention_search_space_frame",
     "OptunaScanConfig",
     "crossed_ablation_specs",
     "optuna_parameter_importances",
@@ -74,5 +82,7 @@ __all__ = [
     "save_ablation_study",
     "suggest_extended_cnn_model_config",
     "suggest_extended_cnn_training_config",
+    "suggest_attention_model_config",
+    "suggest_attention_training_config",
     "summarize_ablations",
 ]

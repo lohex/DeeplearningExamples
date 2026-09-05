@@ -21,7 +21,14 @@ from pytorch_timecourse_classification.data import (
     preprocessors_compatible,
 )
 from pytorch_timecourse_classification.models.cnn import CNNClassifier
+from pytorch_timecourse_classification.models.attention import AttentionClassifier
+from pytorch_timecourse_classification.models.cnn_attention_pooling import (
+    CNNAttentionPoolingClassifier,
+)
 from pytorch_timecourse_classification.models.extended_cnns import ExtendedCNNClassifier
+from pytorch_timecourse_classification.models.hierarchical_patch_transformer import (
+    HierarchicalPatchTransformerClassifier,
+)
 from pytorch_timecourse_classification.explainability import (
     explainable_layers,
     integrated_gradients,
@@ -36,6 +43,8 @@ from pytorch_timecourse_classification.tuning import (
     run_ablations,
     run_optuna_scan,
     summarize_ablations,
+    suggest_attention_model_config,
+    suggest_attention_training_config,
     suggest_extended_cnn_model_config,
     OptunaScanConfig,
 )
@@ -256,6 +265,32 @@ class TimecourseTrainingTests(unittest.TestCase):
                 self.assertNotIn("model.adaptive_pool_size", trial.suggested_names)
             else:
                 self.assertIn("model.adaptive_pool_size", trial.suggested_names)
+
+    def test_attention_search_space_builds_every_architecture(self) -> None:
+        model_types = {
+            "mean_attention": AttentionClassifier,
+            "cls_attention": AttentionClassifier,
+            "cnn_attention_pooling": CNNAttentionPoolingClassifier,
+            "hierarchical_patch": HierarchicalPatchTransformerClassifier,
+        }
+        inputs = torch.randn(4, 1, 16)
+        for architecture, model_type in model_types.items():
+            trial = DeterministicTrial(architecture)
+            config = suggest_attention_model_config(
+                trial, {}, architecture=architecture
+            )
+            model = model_type(input_length=16, num_classes=2, **config)
+            model.eval()
+            with torch.no_grad():
+                logits = model(inputs)
+            self.assertEqual(tuple(logits.shape), (4, 2))
+            self.assertIn("model.architecture", trial.suggested_names)
+
+    def test_attention_training_space_uses_memory_conscious_batches(self) -> None:
+        trial = DeterministicTrial("mean_attention")
+        config = suggest_attention_training_config(trial, self.config)
+        self.assertIn(config.batch_size, {16, 32, 64, 128})
+        self.assertNotIn(config.batch_size, {256, 512})
 
     @unittest.skipUnless(importlib.util.find_spec("optuna"), "Optuna extra not installed")
     def test_total_optuna_budget_is_not_added_twice(self) -> None:
