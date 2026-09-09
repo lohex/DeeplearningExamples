@@ -9,6 +9,7 @@ import pandas as pd
 import torch
 from torch import nn
 
+from pytorch_timecourse_classification.analysis import predict_classes
 from pytorch_timecourse_classification.artifacts import (
     load_model,
     load_selection_manifest,
@@ -167,6 +168,37 @@ class TimecourseTrainingTests(unittest.TestCase):
             torch.testing.assert_close(
                 restored_logits, expected_logits, rtol=0.0, atol=0.0
             )
+
+    def test_predict_classes_uses_bounded_batches(self) -> None:
+        model = AttentionClassifier(
+            input_length=16,
+            num_classes=2,
+            embedding_dim=8,
+            num_heads=2,
+            num_layers=1,
+            feedforward_dim=16,
+            dropout=0.0,
+            pooling="mean",
+            norm_first=True,
+        )
+        model.eval()
+        observed_batch_sizes = []
+
+        def record_batch(module, arguments):
+            observed_batch_sizes.append(len(arguments[0]))
+
+        handle = model.register_forward_pre_hook(record_batch)
+        try:
+            predictions = predict_classes(
+                model, self.train_fold, device="cpu", batch_size=5
+            )
+        finally:
+            handle.remove()
+        self.assertEqual(tuple(predictions.shape), (len(self.train_fold.features),))
+        self.assertEqual(observed_batch_sizes, [5, 5, 2])
+
+        with self.assertRaisesRegex(ValueError, "batch_size must be positive"):
+            predict_classes(model, self.train_fold, device="cpu", batch_size=0)
 
     def test_preprocessor_compatibility_tolerates_serialization_noise(self) -> None:
         reference = Preprocessor(("0pM", "1pM"), 0.5543460792941041, 0.33032176022350446)

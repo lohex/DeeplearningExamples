@@ -619,13 +619,17 @@ def run_optuna_scan(
                 epoch_callback=report_epoch,
             )
             training_predictions = predict_classes(
-                model, training_fold, device=device
+                model, training_fold, device=device,
+                batch_size=training_config.batch_size,
             )
             training_metrics = classification_metrics(
                 training_fold.targets.cpu().numpy(),
                 training_predictions,
             )
-            predictions = predict_classes(model, tuning_fold, device=device)
+            predictions = predict_classes(
+                model, tuning_fold, device=device,
+                batch_size=training_config.batch_size,
+            )
             metrics = classification_metrics(
                 tuning_fold.targets.cpu().numpy(),
                 predictions,

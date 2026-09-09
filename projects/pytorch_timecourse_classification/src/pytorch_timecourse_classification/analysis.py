@@ -105,11 +105,18 @@ def predict_classes(
     fold: FoldData,
     *,
     device: torch.device | str,
+    batch_size: int = 128,
 ) -> np.ndarray:
-    """Return predicted class indices without producing notebook output."""
+    """Return predictions using bounded-memory mini-batch inference."""
+    if batch_size < 1:
+        raise ValueError("batch_size must be positive.")
     model.eval()
+    predictions: list[Tensor] = []
     with torch.no_grad():
-        return model(fold.features.to(device)).argmax(dim=1).cpu().numpy()
+        for start in range(0, len(fold.features), batch_size):
+            batch = fold.features[start:start + batch_size].to(device)
+            predictions.append(model(batch).argmax(dim=1).cpu())
+    return torch.cat(predictions).numpy()
 
 
 def classification_metrics(
